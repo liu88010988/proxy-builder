@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Mihomo version"
+        description: "Mihomo version (ex v1.19.24)"
         required: true
-        default: "v1.19.24"
 
 jobs:
   build:

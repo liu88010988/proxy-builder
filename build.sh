@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 配置参数
-OUTPUT_NAME="mihomo"
+OUTPUT_NAME="${OUTPUT:-mihomo}"
 PKG_SOURCE_URL="https://github.com/MetaCubeX/mihomo.git"
 DEFAULT_VERSION="v1.19.24"
 GO_PKG="github.com/metacubex/mihomo"

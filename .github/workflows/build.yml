@@ -28,10 +28,13 @@ jobs:
             goarch: arm64
             artifact: mihomo-linux-arm64
 
-          - goos: linux
-            goarch: arm
-            goarm: 7
-            artifact: mihomo-linux-armv7
+          - goos: darwin
+            goarch: arm64
+            artifact: mihomo-darwin-arm64
+
+          - goos: windows
+            goarch: amd64
+            artifact: mihomo-windows-amd64.exe
 
     steps:
       - name: Checkout
@@ -53,16 +56,13 @@ jobs:
 
           GOOS=${{ matrix.goos }} \
           GOARCH=${{ matrix.goarch }} \
-          GOARM=${{ matrix.goarm }} \
+          OUTPUT=${{ matrix.artifact }} \
           ./build.sh "${{ github.event.inputs.version }}"
-
-          mv build/output/mihomo \
-            build/output/${{ matrix.artifact }}
 
       - name: Generate SHA256
         run: |
           cd build/output
-          sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+          sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

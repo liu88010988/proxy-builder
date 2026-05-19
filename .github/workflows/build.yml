@@ -4,11 +4,87 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Mihomo version (e.g. v1.19.24)"
-        required: true
+        description: "Mihomo version (optional e.g. v1.19.24)"
+        required: false
+
+  schedule:
+    - cron: '0 0 * * *'
 
 jobs:
+  check-update:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    outputs:
+      should-build: ${{ steps.check.outputs.should-build }}
+      version: ${{ steps.check.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Mihomo Version
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHOULD_BUILD=false
+          VERSION=""
+
+          # 手动指定版本优先
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            SHOULD_BUILD=true
+
+            echo "Manual version: $VERSION"
+
+          else
+            # 获取最新 Mihomo release
+            VERSION=$(curl -sL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              https://api.github.com/repos/MetaCubeX/mihomo/releases/latest \
+              | jq -r '.tag_name')
+
+            echo "Latest Mihomo version: $VERSION"
+
+            # API失败/null时直接跳过
+            if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+              echo "Failed to fetch latest version"
+              SHOULD_BUILD=false
+
+            else
+              # 读取当前版本
+              if [ -f ".mihomo-version" ]; then
+                CURRENT_VERSION=$(cat .mihomo-version | tr -d '\n\r')
+              else
+                CURRENT_VERSION=""
+              fi
+
+              echo "Current version: $CURRENT_VERSION"
+
+              # 比较版本
+              if [ "$VERSION" != "$CURRENT_VERSION" ]; then
+                SHOULD_BUILD=true
+                echo "New version detected"
+              else
+                SHOULD_BUILD=false
+                echo "Already latest"
+              fi
+            fi
+          fi
+
+          echo "should-build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
   build:
+    needs: check-update
+
+    if: needs.check-update.outputs.should-build == 'true'
+
     runs-on: ubuntu-latest
 
     permissions:
@@ -38,6 +114,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -56,7 +134,7 @@ jobs:
           GOOS=${{ matrix.goos }} \
           GOARCH=${{ matrix.goarch }} \
           OUTPUT=${{ matrix.artifact }} \
-          ./build.sh "${{ github.event.inputs.version }}"
+          ./build.sh "${{ needs.check-update.outputs.version }}"
 
       - name: Generate SHA256
         run: |
@@ -72,13 +150,23 @@ jobs:
             build/output/${{ matrix.artifact }}.sha256
 
   release:
-    needs: build
+    needs:
+      - check-update
+      - build
+
+    if: needs.check-update.outputs.should-build == 'true'
+
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -90,7 +178,22 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: Mihomo ${{ github.event.inputs.version }}
+          tag_name: ${{ needs.check-update.outputs.version }}
+          name: Mihomo ${{ needs.check-update.outputs.version }}
           generate_release_notes: true
+          overwrite_files: true
           files: artifacts/**/*
+
+      - name: Update .mihomo-version
+        run: |
+          echo "${{ needs.check-update.outputs.version }}" > .mihomo-version
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add .mihomo-version
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Update mihomo version to ${{ needs.check-update.outputs.version }}"
+            git push
+          fi
